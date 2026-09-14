@@ -1,0 +1,8 @@
+Automated Backup & Sync Utility (FreeFileSync / GoodSync Alternative)
+Concept: tpt-sync – A reliable, versioned backup tool for local and cloud destinations.
+Tech Stack: Go (excellent for high-concurrency file I/O and network requests) + Rust (for fast checksumming like BLAKE3).
+Why it’s better: GoodSync locks scheduling and advanced cloud destinations behind a paywall. An open-source Go-based tool can handle SMB, WebDAV, S3, and local drives concurrently, with versioned snapshots, without any hidden licensing tiers.
+
+Compatible on Windows, Linux and Archon. https://github.com/tpt-solutions/tpt-archon
+
+Linux & Archon Compatibility: Native Linux filesystem support (ext4, btrfs, zfs). On Archon, backup snapshots are managed as zero-copy B-Link tree deltas via tpt-archon-core, enabling instantaneous, space-efficient local versioning before syncing to external targets.

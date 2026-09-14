@@ -1,0 +1,39 @@
+# Go
+/engine/**/*.exe
+/engine/**/*.test
+/engine/vendor/
+
+# Rust
+/hash/target/
+/src-tauri/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Node / Vite / Tauri frontend
+node_modules/
+dist/
+src-tauri/target/
+.vite/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Build output
+/build/
+/dist/
+*.msi
+*.exe
+*.dmg
+*.AppImage
+*.deb
+*.rpm
