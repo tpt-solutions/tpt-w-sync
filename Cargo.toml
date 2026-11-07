@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = ["hash"]
+
+# Shared metadata inherited by workspace members via `*.workspace = true`.
+# Tauri's src-tauri/ crate joins `members` in Phase 9.
+[workspace.package]
+license = "MIT OR Apache-2.0"
+authors = ["TPT Solutions"]
+repository = "https://github.com/tpt-solutions/tpt-sync"
+edition = "2024"
+rust-version = "1.85.0"

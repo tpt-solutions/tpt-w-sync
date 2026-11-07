@@ -1,0 +1,13 @@
+[package]
+name = "tpt-sync-hash"
+version = "0.1.0"
+description = "BLAKE3 checksum helper for tpt-sync (invoked as a subprocess by the Go engine)"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+blake3 = "1"
