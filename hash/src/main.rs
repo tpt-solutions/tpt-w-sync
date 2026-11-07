@@ -25,10 +25,18 @@ use std::process::ExitCode;
 
 /// Hash a file by streaming it through BLAKE3 and return the 64-char hex digest.
 pub fn hash_file(path: &Path) -> io::Result<String> {
-    let file = File::open(path)?;
-    let mut reader = BufReader::with_capacity(1 << 20, file);
+    // Large files are memory-mapped and hashed across all cores; small files
+    // use buffered streaming, where mapping costs more than it saves.
+    const MAP_THRESHOLD: u64 = 8 << 20;
+    let len = std::fs::metadata(path)?.len();
     let mut hasher = blake3::Hasher::new();
-    hasher.update_reader(&mut reader)?;
+    if len >= MAP_THRESHOLD {
+        hasher.update_mmap_rayon(path)?;
+    } else {
+        let file = File::open(path)?;
+        let mut reader = BufReader::with_capacity(1 << 20, file);
+        hasher.update_reader(&mut reader)?;
+    }
     Ok(hasher.finalize().to_hex().to_string())
 }
 

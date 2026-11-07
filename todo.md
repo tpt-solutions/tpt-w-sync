@@ -141,8 +141,10 @@ have not been run against a real NAS, Nextcloud, AWS, or MinIO server.
       helper 1,432 MB/s vs pure-Go 1,895 MB/s, so the subprocess is slower for a
       large single file. Batching is what pays off: 1,000 small files in one
       helper call took 2.2 s versus about 17 ms per file when spawned per file.
-      Open: Rust-side multithreading (blake3 rayon feature) might close the gap;
-      large-tree benchmarks not yet run.
+      Follow-up: files of 8 MiB or more are now memory-mapped and hashed across
+      all cores (blake3 `mmap` + `rayon` features). Result on the same machine:
+      helper about 2,000 MB/s versus about 1,850 MB/s for pure Go, so the
+      Rust helper is kept. Small files still use buffered streaming.
 - [x] Unit tests: hash correctness against known BLAKE3 test vectors
       (empty input and "abc"), streaming vs one-shot, JSON escaping
       — plus Go integration tests against the real binary (`engine/hasher_test.go`)
