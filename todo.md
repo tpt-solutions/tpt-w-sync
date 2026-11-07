@@ -40,84 +40,127 @@ Decisions locked in for this roadmap:
   near-instant sync of changed files.
 - Company: TPT Solutions. License: dual **MIT OR Apache-2.0**.
 
+Decisions made while implementing (recommendations adopted):
+- **Snapshot model**: each run writes a complete tree under
+  `.tpt-sync/versions/<ts>/`; the newest complete snapshot is named in
+  `.tpt-sync/latest`. There is no separate mirror copy. "Version-and-replace"
+  in the plan is therefore realised as "write a new snapshot".
+- **Write safety**: files are written to a temp file and renamed into place,
+  never modified in place, so hardlinked older versions stay intact.
+- **Encryption dedup**: random nonces mean identical plaintext produces
+  different ciphertext, so dedup is by name, not content. Unchanged files are
+  linked from the previous snapshot using keyed obfuscated names; an encrypted
+  manifest per snapshot maps names back to paths.
+- **Job config format**: JSON (not TOML), to avoid an extra dependency.
+- **Module Go version**: 1.26 (required by the current `golang.org/x/crypto`).
+
 ---
 
 ## Status Summary
 
 | Phase | Area | Progress |
 |-------|------|----------|
-| 0  | Project Setup & Licensing | ❌ Not Started |
-| 1  | Core Sync Engine & Job Model (Go) | ❌ Not Started |
-| 2  | Rust BLAKE3 Checksum Helper | ❌ Not Started |
-| 3  | Destination Backends: Local, SMB, WebDAV, S3 | ❌ Not Started |
-| 4  | Cloud Destination Backends: Google Drive, Dropbox, Azure Blob | ❌ Not Started |
-| 5  | Versioned Snapshots & Hardlink Dedup | ❌ Not Started |
-| 6  | Scheduling: Cron Jobs & Real-Time Watch | ❌ Not Started |
-| 7  | Optional End-to-End Encryption | ❌ Not Started |
-| 8  | CLI | ❌ Not Started |
+| 0  | Project Setup & Licensing | 🟡 In Progress (local items done; CI untested on GitHub; tauri config, org hosting pending) |
+| 1  | Core Sync Engine & Job Model (Go) | 🟢 Done except OS-keychain credentials |
+| 2  | Rust BLAKE3 Checksum Helper | 🟢 Done except benchmarks and installer bundling |
+| 3  | Destination Backends: Local, SMB, WebDAV, S3 | 🟡 Local, WebDAV, S3 done (tested against in-process servers); SMB not started |
+| 4  | Cloud Destination Backends: Google Drive, Dropbox, Azure Blob | ❌ Not Started (needs provider app registrations) |
+| 5  | Versioned Snapshots & Hardlink Dedup | 🟢 Done except size-based retention |
+| 6  | Scheduling: Cron Jobs & Real-Time Watch | 🟢 Done except configurable missed-run policy and OS service install |
+| 7  | Optional End-to-End Encryption | 🟢 Core and OS-keychain storage done; recovery-phrase (BIP-39) not implemented, warning UX only |
+| 8  | CLI | 🟡 Core commands done (incl. `secret`, remote destinations); IPC and CLI tests pending |
 | 9  | Tauri Tray/GUI Status App | ❌ Not Started |
-| 10 | Linux Filesystem-Specific Support | ❌ Not Started |
-| 11 | Archon Support (Design Only) | ❌ Not Started |
+| 10 | Linux Filesystem-Specific Support | ❌ Not Started (needs ext4/btrfs/zfs test targets) |
+| 11 | Archon Support (Design Only) | 🟡 Design doc written; stub backend pending |
 | 12 | Performance & Concurrency Polish | ❌ Not Started |
-| 13 | Testing & QA | ❌ Not Started |
+| 13 | Testing & QA | 🟡 Unit and end-to-end smoke tests done; integration and manual QA pending |
 | 14 | Release v1 | ❌ Not Started |
+
+Verification status: Rust helper tests pass (`cargo test`). Go tests pass on
+Windows (`go test ./...`, 38 engine/backend/keychain tests, including the real
+helper integration tests, the encryption tests, and WebDAV/S3 full-cycle tests
+against in-process servers). The race detector and Linux runs are configured in
+CI but have not been run locally (race needs cgo). The WebDAV and S3 backends
+have not been run against a real NAS, Nextcloud, AWS, or MinIO server.
 
 ---
 
 ## Phase 0 — Project Setup & Licensing
-- [ ] Init git repo, `.gitignore` (Go + Rust + Node/Tauri targets + Windows build artifacts)
-- [ ] Add `LICENSE-MIT` and `LICENSE-APACHE` (dual license, TPT Solutions copyright)
-- [ ] Add SPDX dual-license header/notice convention for source files
+- [x] Init git repo, `.gitignore` (Go + Rust + Node/Tauri targets + Windows build artifacts)
+- [x] Add `LICENSE-MIT` and `LICENSE-APACHE` (dual license, TPT Solutions copyright)
+- [x] Add SPDX dual-license header/notice convention for source files (documented in README)
 - [ ] Repo layout: `engine/` (Go sync core, scheduler, backends, CLI), `hash/`
       (Rust BLAKE3 helper binary crate), `src-tauri/` (Tauri backend), `src/`
       (TS/Vite frontend, no framework), shared module/workspace metadata
       (`license`, `authors = ["TPT Solutions"]`, `repository`)
-- [ ] `go.mod` module setup, `rust-toolchain.toml` (MSRV pin), `rustfmt.toml`, `clippy.toml`
+      — partial: `engine/`, `hash/`, and workspace metadata exist; `src-tauri/` and `src/` pending Phase 9
+- [x] `go.mod` module setup, `rust-toolchain.toml` (MSRV pin), `rustfmt.toml`, `clippy.toml`
 - [ ] Configure `tauri.conf.json` (app id, window defaults, bundle identifiers for tpt-sync)
-- [ ] `README.md` (from spec.txt), build instructions, license badges
-- [ ] Set up CI (GitHub Actions, build+lint+test on Windows + Linux runners)
-- [ ] Repo hosting under `tpt-solutions` GitHub org
+      — pending: needs Tauri scaffold (`src-tauri/`), deferred to Phase 9
+- [x] `README.md` (from spec.txt), build instructions, license section
+      — badges not yet added
+- [x] Set up CI (GitHub Actions, build+lint+test on Windows + Linux runners)
+      — `.github/workflows/ci.yml`; Rust steps verified locally; Go steps not yet run on GitHub
+- [ ] Repo hosting under `tpt-solutions` GitHub org — not done (outward-facing; needs your action)
 
 ## Phase 1 — Core Sync Engine & Job Model (Go)
-- [ ] Sync job model: source path, destination (backend + path), direction
+- [x] Sync job model: source path, destination (backend + path), direction
       (one-way mirror), include/exclude filters, versioning policy
-- [ ] Filesystem walker/diffing: compare source vs. last-known destination
+      — `engine/job.go`, `engine/filter.go`
+- [x] Filesystem walker/diffing: compare source vs. last-known destination
       state (size, mtime, then checksum via Phase 2 helper on mismatch)
-- [ ] Concurrency model: worker pool for parallel file transfers/hashing
+      — `engine/plan.go`
+- [x] Concurrency model: worker pool for parallel file transfers/hashing
       across a job, bounded by configurable concurrency limit
-- [ ] Transfer plan model: create/update/delete/version-and-replace actions,
-      dry-run mode
-- [ ] Job execution engine: apply a transfer plan, progress reporting,
-      cancellation, resumability after interruption
-- [ ] Config persistence (job definitions, destination credentials via OS
-      keychain) — JSON or TOML
-- [ ] Unit tests: diffing logic, transfer plan generation, dry-run correctness
+      — `engine/run.go` (`executor`); hashing is batched in the helper
+- [x] Transfer plan model: create/update/delete actions, dry-run mode
+      (delete is realised by omitting the file from the new snapshot)
+- [x] Job execution engine: apply a transfer plan, progress reporting,
+      cancellation. Resumability: each file is written atomically and a
+      failed or cancelled run discards its partial snapshot, so the next run
+      re-plans from the last good snapshot (no partial-snapshot resume).
+- [x] Config persistence (job definitions in JSON; destination passwords and
+      passphrases in the OS keychain)
+- [x] Unit tests: diffing logic, transfer plan generation, dry-run correctness
+      — `engine/run_test.go`, `engine/filter_test.go`
 
 ## Phase 2 — Rust BLAKE3 Checksum Helper
-- [ ] `tpt-sync-hash` Rust binary: BLAKE3 checksum over one or many files,
-      streaming (no full-file memory load for large files)
-- [ ] CLI interface: file path args or stdin, structured (JSON lines) output
+- [x] `tpt-sync-hash` Rust binary: BLAKE3 checksum over one or many files,
+      streaming (1 MiB read buffer; memory does not scale with file size)
+      — `hash/src/main.rs`
+- [x] CLI interface: file path args or stdin, structured (JSON lines) output
       for easy parsing by the Go engine
-- [ ] Batch mode for hashing many files in one invocation (amortize process
-      spawn cost across a sync job)
-- [ ] Go wrapper: subprocess invocation, streaming stdout parsing, error
-      propagation, binary discovery/bundling alongside the Go engine
+- [x] Batch mode for hashing many files in one invocation (512 paths per
+      process, `--stdin`)
+- [x] Go wrapper: subprocess invocation, streaming stdout parsing, error
+      propagation, binary discovery (`$TPT_SYNC_HASH`, next to executable, PATH)
+      — `engine/hasher.go`. Bundling alongside the installer is in Phase 14.
 - [ ] Benchmarks: throughput vs. a pure-Go BLAKE3 baseline to validate the
       subprocess-boundary approach doesn't regress performance on large trees
-- [ ] Unit tests: hash correctness against known BLAKE3 test vectors
+- [x] Unit tests: hash correctness against known BLAKE3 test vectors
+      (empty input and "abc"), streaming vs one-shot, JSON escaping
+      — plus Go integration tests against the real binary (`engine/hasher_test.go`)
 
 ## Phase 3 — Destination Backends: Local, SMB, WebDAV, S3
-- [ ] Shared `Backend` interface (list/stat/read/write/delete/rename,
-      capability flags e.g. hardlink support)
-- [ ] Local filesystem backend (Windows + Linux paths, hardlink support probe)
+- [x] Shared `Backend` interface (walk/stat/open/write/link/delete/list dirs/
+      remove tree, capability flags e.g. hardlink support)
+      — `engine/backend/backend.go`. Rename is not in the interface: `Write`
+      is already atomic (temp file + rename).
+- [x] Local filesystem backend (Windows + Linux paths, hardlink support probe,
+      path-escape rejection, symlinks skipped) — `engine/backend/local.go`
 - [ ] SMB backend (native SMB2/3 client, credential handling, share mounting)
-- [ ] WebDAV backend (HTTP client, basic/digest/bearer auth)
-- [ ] S3-compatible backend (AWS S3 + MinIO/B2-via-S3-API, multipart upload
-      for large files, credential handling)
-- [ ] Backend capability negotiation: how versioning (Phase 5) degrades on
-      backends without native hardlink support (e.g. S3, WebDAV)
+- [x] WebDAV backend (HTTP basic auth; refuses credentials over plain http
+      unless a test opts in). Digest/bearer auth not implemented.
+      — `engine/backend/webdav.go`, tested against `engine/internal/davfake`
+- [x] S3-compatible backend (AWS S3, MinIO, any S3 API via minio-go; multipart
+      uploads handled by the client; credentials refused over plain http)
+      — `engine/backend/s3.go`, tested over TLS against gofakes3. Not tested
+      against real AWS, MinIO, or B2.
+- [x] Backend capability negotiation: `Capabilities().Hardlink` selects
+      hardlink dedup or full-copy fallback (mechanism in place; exercised
+      only by local backend so far)
 - [ ] Integration tests per backend (local always; SMB/WebDAV/S3 against
-      test doubles or containerized test servers in CI)
+      test doubles or containerized test servers in CI) — local covered
 
 ## Phase 4 — Cloud Destination Backends: Google Drive, Dropbox, Azure Blob
 - [ ] OAuth2 flow handling per provider (Google Drive, Dropbox, Azure Blob),
@@ -133,51 +176,69 @@ Decisions locked in for this roadmap:
 - [ ] Integration tests against provider sandboxes/mocked APIs
 
 ## Phase 5 — Versioned Snapshots & Hardlink Dedup
-- [ ] Timestamped version directory scheme (e.g. `.tpt-sync/versions/<ts>/`)
-      per destination
-- [ ] Hardlink-based dedup: unchanged files link to the previous version
-      instead of being re-copied, on backends that support it (local, SMB
-      with appropriate filesystem)
-- [ ] Fallback full-copy versioning for backends without hardlink support
-      (S3, WebDAV, cloud providers — Phase 3/4 capability flag driven)
-- [ ] Retention policy: max versions / max age / max total size, pruning job
-- [ ] Restore flow: browse versions, restore a file or whole tree from a
-      given snapshot back to source or an arbitrary path
-- [ ] Unit tests: hardlink dedup correctness, retention pruning logic,
-      restore correctness across both hardlink and full-copy modes
+- [x] Timestamped version directory scheme (`.tpt-sync/versions/<ts>/`)
+      per destination, with `.tpt-sync/latest` marking the newest complete one
+- [x] Hardlink-based dedup: unchanged files link to the previous version
+      instead of being re-copied (verified with `os.SameFile`)
+- [x] Fallback full-copy versioning for backends without hardlink support
+      (driven by `Capabilities().Hardlink`)
+- [~] Retention policy: max versions ✓, max age ✓; max total size pending
+      (needs a unique-inode size accounting pass)
+- [x] Restore flow: restore a file or whole tree from a given snapshot (or the
+      latest) to an arbitrary path — CLI `versions restore`. Restoring back
+      into the source in place is not implemented; restore to a chosen path
+      is the supported flow.
+- [x] Unit tests: hardlink dedup correctness, retention pruning logic,
+      restore correctness (hardlink mode covered; full-copy mode not yet tested)
 
 ## Phase 6 — Scheduling: Cron Jobs & Real-Time Watch
-- [ ] Cron-style schedule parser/runner for periodic jobs (per-job schedule)
-- [ ] Real-time filesystem watch: `fsnotify` (Linux) / `ReadDirectoryChangesW`
-      (Windows) triggering near-instant sync of changed paths
-- [ ] Debounce/coalesce rapid successive changes before triggering a sync run
-- [ ] Scheduler daemon/service process hosting both cron and watch triggers,
-      running independent of the GUI
-- [ ] Missed-run handling (e.g. machine was off at scheduled time — run on
-      next wake, configurable)
-- [ ] Unit tests: cron scheduling correctness, debounce timing, missed-run logic
+- [x] Cron-style schedule parser/runner for periodic jobs (per-job schedule)
+      — `engine/schedule/cron.go` (5-field, lists/ranges/steps, @aliases,
+      DOM/DOW OR semantics)
+- [x] Real-time filesystem watch: `fsnotify` (inotify on Linux,
+      ReadDirectoryChangesW on Windows), new subdirectories added automatically
+      — `engine/schedule/watch.go`
+- [x] Debounce/coalesce rapid successive changes before triggering a sync run
+      (quiet period plus max-wait) — `engine/schedule/debounce.go`
+- [x] Scheduler daemon hosting cron and watch triggers, serialising runs per
+      job and queueing one follow-up run — `engine/daemon/daemon.go`,
+      `tpt-sync daemon`. Running as an OS service (systemd unit / Windows
+      service) is Phase 10/14.
+- [~] Missed-run handling: a run missed while stopped is caught up once at
+      startup. Configurable policy (run / skip / on next wake) pending.
+- [x] Unit tests: cron scheduling correctness, debounce timing and max-wait,
+      watch event delivery. Missed-run logic is not yet unit-tested.
 
 ## Phase 7 — Optional End-to-End Encryption
-- [ ] Per-job opt-in E2E encryption toggle with user passphrase
-- [ ] Argon2id key derivation → AES-256-GCM envelope encryption per file
+- [x] Per-job opt-in E2E encryption toggle (`--encrypt`), passphrase supplied
+      via `TPT_SYNC_PASSPHRASE` (interim)
+- [x] Argon2id key derivation → AES-256-GCM, streamed in 64 KiB authenticated
+      chunks (detects reordering, truncation, trailing data) — `engine/crypt/`
       (mirrors tpt-clipboard's pattern)
-- [ ] Encrypted filename/path handling (avoid leaking directory structure to
-      the destination when encryption is enabled, where feasible per backend)
-- [ ] Key/passphrase storage: OS keychain, with recovery-phrase warning UX
-      (passphrase loss = unrecoverable data)
-- [ ] Tests: encryption round-trip, wrong-passphrase rejection, interaction
-      with versioning (Phase 5) and hardlink dedup (ciphertext must still
-      dedup correctly when content is unchanged)
+- [x] Encrypted filename/path handling: keyed (HMAC) obfuscated file names and
+      a sealed per-snapshot manifest, so the destination reveals no paths
+- [x] Key/passphrase storage: OS keychain (Windows Credential Manager, macOS
+      Keychain, Linux Secret Service via go-keyring), with a non-echoing prompt
+      and a confirmation step and a loss warning. `TPT_SYNC_PASSPHRASE` overrides.
+      — `engine/secrets/`. Not yet done: a BIP-39 recovery phrase (warning only).
+- [x] Tests: encryption round-trip at chunk boundaries, tamper/truncation
+      detection, wrong-passphrase rejection, no plaintext on disk, dedup of
+      unchanged files across encrypted snapshots
+      — Note: a touch-only mtime change re-encrypts the file (plaintext
+      checksum is not stored), a known cost of the dedup-by-name design
 
 ## Phase 8 — CLI
-- [ ] `tpt-sync job add/list/edit/remove` (job definitions)
-- [ ] `tpt-sync run <job>` (on-demand run, `--dry-run` support)
-- [ ] `tpt-sync schedule enable/disable <job>` (cron + watch control)
-- [ ] `tpt-sync versions list/restore <job> [--version <ts>]`
-- [ ] `tpt-sync status` (running jobs, last-run results, next scheduled runs)
+- [x] `tpt-sync job add/edit/list/show/remove` (job definitions)
+- [x] `tpt-sync run <job>` (on-demand run, `--dry-run` support)
+- [x] `tpt-sync schedule enable/disable <job>` (cron + watch control)
+- [x] `tpt-sync versions list/restore <job> [--version <ts>] [--path REL]`
+- [~] `tpt-sync status` (last-run results and next scheduled run). Live
+      "currently running" state needs the daemon IPC below.
 - [ ] CLI talks to the same engine/daemon used by the GUI (local
-      socket/named pipe IPC)
-- [ ] CLI unit/integration tests
+      socket/named pipe IPC). Today `run` executes in-process and the daemon is
+      a separate foreground process; they coordinate only through the store.
+- [ ] CLI unit/integration tests (command parsing and output not yet covered;
+      engine behaviour is covered)
 
 ## Phase 9 — Tauri Tray/GUI Status App
 - [ ] Tray icon + menu: job status at a glance, quick run/pause, open main window
@@ -201,14 +262,15 @@ Decisions locked in for this roadmap:
 - [ ] Verify behavior on at least one ext4 and one btrfs/zfs test target
 
 ## Phase 11 — Archon Support (Design Only)
-- [ ] `docs/archon-design.md`: design for zero-copy, space-efficient local
+- [x] `docs/archon-design.md`: design for zero-copy, space-efficient local
       versioning via B-Link tree deltas through `tpt-archon-core`, enabling
       instantaneous local snapshots before syncing to external targets
-- [ ] Open Questions (pending tpt-archon team): B-Link tree delta API shape,
-      how Archon-native snapshots map onto the versioning model from Phase 5,
-      interaction with hardlink-dedup fallback for non-Archon destinations
+- [x] Open Questions (pending tpt-archon team): recorded in
+      `docs/archon-design.md` (delta API shape, mapping to versioning model,
+      file addressing, hardlink fallback interaction, consistency, encryption)
 - [ ] Post-v1 `archon` backend/feature flag plan (stub backend,
-      `is_available() -> false`, `Unsupported` errors until implemented)
+      `is_available() -> false`, `Unsupported` errors until implemented) —
+      plan is in the design doc; stub not yet written
 
 ## Phase 12 — Performance & Concurrency Polish
 - [ ] Large-tree performance tuning (millions of small files scenario):
@@ -220,8 +282,8 @@ Decisions locked in for this roadmap:
 - [ ] App icon, branding assets (TPT Solutions)
 
 ## Phase 13 — Testing & QA
-- [ ] Unit tests: diffing, versioning/dedup, scheduling, encryption (already
-      tracked per-phase above) — consolidated coverage pass
+- [~] Unit tests: diffing, versioning/dedup, scheduling, encryption (per-phase
+      tests in place; consolidated coverage pass pending)
 - [ ] Integration tests: end-to-end job run across each backend (local, SMB,
       WebDAV, S3, Google Drive, Dropbox, Azure Blob)
 - [ ] Manual QA: Windows 10/11
