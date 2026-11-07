@@ -210,8 +210,10 @@ have not been run against a real NAS, Nextcloud, AWS, or MinIO server.
       job and queueing one follow-up run — `engine/daemon/daemon.go`,
       `tpt-sync daemon`. Running as an OS service (systemd unit / Windows
       service) is Phase 10/14.
-- [~] Missed-run handling: a run missed while stopped is caught up once at
-      startup. Configurable policy (run / skip / on next wake) pending.
+- [x] Missed-run handling: per-job `missed_run` = `catch-up` (default, runs once
+      at startup) or `skip` (waits for the next tick). — `engine/job.go`,
+      `--missed-run`. "On next wake" is covered by catch-up at startup; OS wake
+      events are not hooked.
 - [x] Unit tests: cron scheduling correctness, debounce timing and max-wait,
       watch event delivery. Missed-run logic is not yet unit-tested.
 
@@ -290,11 +292,23 @@ have not been run against a real NAS, Nextcloud, AWS, or MinIO server.
       backend yet; that waits on the tpt-archon API.
 
 ## Phase 12 — Performance & Concurrency Polish
-- [ ] Large-tree performance tuning (millions of small files scenario):
-      walker/diffing throughput, worker pool tuning
-- [x] Bandwidth throttling, per job (shared by all of the job's transfers).
-      Global cap across jobs still pending.
-      — `engine/throttle.go`, `--bandwidth-limit` (e.g. 5M)
+- [~] Large-tree performance tuning (millions of small files scenario):
+      walker/diffing throughput, worker pool tuning.
+      Measured 100,000 files in 100 folders (`TPT_SYNC_STRESS=100000`, this
+      Windows machine, default 4 workers):
+        - first run, copies everything: 12 min 14 s
+        - no-change run, hardlinks everything: 47.6 s
+        - heap after first run: 59 MiB
+      Finding: the first run is dominated by the per-file fsync that makes each
+      file durable before the snapshot is published. Measured alone, one fsync
+      costs about 6.4 ms here versus 0.8 ms for the write without it, and four
+      workers do not help because NTFS serialises the flushes. Decision needed:
+      keep per-file fsync (current, safe), or drop it for a faster mode that can
+      publish a snapshot whose files are not yet on disk after a power loss.
+- [x] Bandwidth throttling: per job (shared by the job's transfers) and daemon-wide
+      (`tpt-sync daemon --bandwidth-limit`, shared across all jobs). Both apply
+      to every transfer. — `engine/throttle.go`
+      Not yet: a cap on the CLI's in-process runs when no daemon is running.
 - [ ] Memory profiling (engine daemon, checksum helper batching, WebView)
 - [ ] Resumable transfer correctness under interruption (network drop,
       process kill) across all backends
