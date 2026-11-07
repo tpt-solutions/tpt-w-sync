@@ -22,6 +22,7 @@ import (
 
 	"github.com/tpt-solutions/tpt-sync/engine"
 	"github.com/tpt-solutions/tpt-sync/engine/daemon"
+	"github.com/tpt-solutions/tpt-sync/engine/ipc"
 	"github.com/tpt-solutions/tpt-sync/engine/schedule"
 	"github.com/tpt-solutions/tpt-sync/engine/secrets"
 )
@@ -444,6 +445,11 @@ func (c *cli) runCmd(args []string) error {
 			}
 		}
 	}
+	if !*dry {
+		if handled, err := c.runViaDaemon(ctx, name); handled {
+			return err
+		}
+	}
 	started := time.Now()
 	res, err := engine.Run(ctx, job, opts)
 	if !*dry {
@@ -476,6 +482,32 @@ func (c *cli) runCmd(args []string) error {
 	fmt.Fprintf(c.out, "snapshot %s: %d copied, %d linked, %d removed from latest\n",
 		res.Snapshot, res.Copied, res.Linked, res.Deleted)
 	return nil
+}
+
+// endpoint is the control channel of the daemon that owns this config directory.
+func (c *cli) endpoint() string { return ipc.DefaultEndpoint(c.store.Dir) }
+
+// runViaDaemon asks a running daemon to perform the run, so manual and
+// scheduled runs never overlap. handled is false when no daemon is running and
+// the caller should run in-process.
+func (c *cli) runViaDaemon(ctx context.Context, name string) (handled bool, err error) {
+	resp, err := ipc.Call(ctx, c.endpoint(), ipc.Request{Op: "run", Job: name})
+	if errors.Is(err, ipc.ErrNotRunning) {
+		return false, nil
+	}
+	if err != nil {
+		return true, err
+	}
+	if !resp.OK {
+		return true, errors.New(resp.Error)
+	}
+	var rec engine.RunRecord
+	if err := json.Unmarshal(resp.Data, &rec); err != nil {
+		return true, fmt.Errorf("daemon reply: %w", err)
+	}
+	fmt.Fprintf(c.out, "snapshot %s (run by daemon): %d copied, %d linked, %d removed from latest\n",
+		rec.Snapshot, rec.Copied, rec.Linked, rec.Deleted)
+	return true, nil
 }
 
 func (c *cli) schedule(args []string) error {
@@ -650,8 +682,20 @@ func (c *cli) status() error {
 	if err != nil {
 		return err
 	}
+	// Ask the daemon for live state if one is running.
+	live := map[string]daemon.JobStatus{}
+	daemonUp := false
+	if resp, err := ipc.Call(context.Background(), c.endpoint(), ipc.Request{Op: "status"}); err == nil && resp.OK {
+		var statuses []daemon.JobStatus
+		if json.Unmarshal(resp.Data, &statuses) == nil {
+			daemonUp = true
+			for _, s := range statuses {
+				live[s.Name] = s
+			}
+		}
+	}
 	tw := tabwriter.NewWriter(c.out, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tENABLED\tLAST RUN\tRESULT\tNEXT RUN")
+	fmt.Fprintln(tw, "NAME\tENABLED\tRUNNING\tLAST RUN\tRESULT\tNEXT RUN")
 	for _, j := range jobs {
 		last, result := "never", "-"
 		if r, ok := runs[j.Name]; ok {
@@ -676,7 +720,14 @@ func (c *cli) status() error {
 				next += " (+ on change)"
 			}
 		}
-		fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%s\n", j.Name, j.Enabled, last, result, next)
+		running := "-"
+		if daemonUp {
+			running = "no"
+			if live[j.Name].Running {
+				running = "yes"
+			}
+		}
+		fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%s\t%s\n", j.Name, j.Enabled, running, last, result, next)
 	}
 	return tw.Flush()
 }
@@ -684,7 +735,7 @@ func (c *cli) status() error {
 func (c *cli) daemonCmd() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	d := &daemon.Daemon{Store: c.store, Log: c.out, Secrets: c.secretStore()}
+	d := &daemon.Daemon{Store: c.store, Log: c.out, Secrets: c.secretStore(), ControlEndpoint: c.endpoint()}
 	return d.Run(ctx)
 }
 

@@ -3,16 +3,20 @@
 
 // Package daemon hosts the scheduler: it runs enabled jobs on their cron
 // schedules and on filesystem change (watch) triggers, independent of any UI.
+// It also serves a local control channel (package ipc) so the CLI and GUI can
+// request runs and read status while the daemon owns the run state.
 package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"sync"
 	"time"
 
 	"github.com/tpt-solutions/tpt-sync/engine"
+	"github.com/tpt-solutions/tpt-sync/engine/ipc"
 	"github.com/tpt-solutions/tpt-sync/engine/schedule"
 	"github.com/tpt-solutions/tpt-sync/engine/secrets"
 )
@@ -31,11 +35,29 @@ type Daemon struct {
 	Now    func() time.Time
 	// Secrets supplies passphrases and remote destination passwords.
 	Secrets secrets.Store
+	// ControlEndpoint, if set, is where the control channel listens
+	// (see ipc.DefaultEndpoint). Empty disables it.
+	ControlEndpoint string
 
-	// per-job state: a run lock, and a flag set when a trigger arrived mid-run.
-	mu      sync.Mutex
-	running map[string]bool
-	pending map[string]bool
+	mu     sync.Mutex
+	states map[string]*jobState
+}
+
+// jobState serialises runs of one job. A trigger that arrives during a run
+// marks it pending so exactly one follow-up run happens afterwards.
+type jobState struct {
+	cond    *sync.Cond
+	running bool
+	pending bool
+	last    *engine.RunRecord
+}
+
+// JobStatus is the live state of one job, reported over the control channel.
+type JobStatus struct {
+	Name    string            `json:"name"`
+	Enabled bool              `json:"enabled"`
+	Running bool              `json:"running"`
+	Last    *engine.RunRecord `json:"last,omitempty"`
 }
 
 func (d *Daemon) logf(format string, args ...any) {
@@ -51,17 +73,45 @@ func (d *Daemon) now() time.Time {
 	return time.Now()
 }
 
-// Run starts all enabled scheduled and watched jobs and blocks until ctx is
-// done. Returns an error only if the job list cannot be loaded.
+// state returns the run state for a job, creating it on first use.
+func (d *Daemon) state(name string) *jobState {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.states == nil {
+		d.states = map[string]*jobState{}
+	}
+	st, ok := d.states[name]
+	if !ok {
+		st = &jobState{}
+		st.cond = sync.NewCond(&d.mu)
+		d.states[name] = st
+	}
+	return st
+}
+
+// Run starts scheduled and watched jobs and the control channel, and blocks
+// until ctx is done. Returns an error if the job list cannot be loaded or the
+// control endpoint cannot be opened.
 func (d *Daemon) Run(ctx context.Context) error {
 	jobs, err := d.Store.LoadJobs()
 	if err != nil {
 		return err
 	}
-	d.running = map[string]bool{}
-	d.pending = map[string]bool{}
-
 	var wg sync.WaitGroup
+	if d.ControlEndpoint != "" {
+		l, err := ipc.Listen(d.ControlEndpoint)
+		if err != nil {
+			return fmt.Errorf("control channel: %w", err)
+		}
+		d.logf("control channel at %s", d.ControlEndpoint)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := ipc.Serve(ctx, l, d.handle); err != nil {
+				d.logf("control channel stopped: %v", err)
+			}
+		}()
+	}
 	for _, job := range jobs {
 		if !job.Enabled {
 			continue
@@ -92,14 +142,27 @@ func (d *Daemon) Run(ctx context.Context) error {
 	return nil
 }
 
+// MissedRun reports whether a scheduled tick fell between the last recorded
+// run and now, and if so returns that tick. A job that has never run is not
+// considered to have missed anything.
+func MissedRun(sched *schedule.Schedule, lastStarted, now time.Time) (time.Time, bool) {
+	if lastStarted.IsZero() {
+		return time.Time{}, false
+	}
+	next := sched.Next(lastStarted)
+	if next.IsZero() || next.After(now) {
+		return time.Time{}, false
+	}
+	return next, true
+}
+
 // scheduleLoop fires a job at each cron tick. On startup it runs once if a
 // tick was missed since the job's last recorded run.
 func (d *Daemon) scheduleLoop(ctx context.Context, job engine.Job, sched *schedule.Schedule) {
-	now := d.now()
 	if runs, err := d.Store.LastRuns(); err == nil {
-		if last, ok := runs[job.Name]; ok && !last.Started.IsZero() {
-			if next := sched.Next(last.Started); !next.IsZero() && !next.After(now) {
-				d.logf("job %s: missed run at %s, running now", job.Name, next.Format(time.RFC3339))
+		if last, ok := runs[job.Name]; ok {
+			if tick, missed := MissedRun(sched, last.Started, d.now()); missed {
+				d.logf("job %s: missed run at %s, running now", job.Name, tick.Format(time.RFC3339))
 				d.trigger(ctx, job.Name)
 			}
 		}
@@ -133,26 +196,28 @@ func (d *Daemon) watchLoop(ctx context.Context, job engine.Job) {
 	}
 }
 
-// trigger runs the named job now, or coalesces with a run already in progress
-// (at most one follow-up run is queued).
+// trigger starts the named job in the background, or marks a run in progress
+// as pending so one follow-up run happens when it finishes.
 func (d *Daemon) trigger(ctx context.Context, name string) {
+	st := d.state(name)
 	d.mu.Lock()
-	if d.running[name] {
-		d.pending[name] = true
+	if st.running {
+		st.pending = true
 		d.mu.Unlock()
 		return
 	}
-	d.running[name] = true
+	st.running = true
 	d.mu.Unlock()
 
 	go func() {
 		for {
 			d.runOnce(ctx, name)
 			d.mu.Lock()
-			again := d.pending[name] && ctx.Err() == nil
-			d.pending[name] = false
+			again := st.pending && ctx.Err() == nil
+			st.pending = false
 			if !again {
-				d.running[name] = false
+				st.running = false
+				st.cond.Broadcast()
 				d.mu.Unlock()
 				return
 			}
@@ -161,11 +226,35 @@ func (d *Daemon) trigger(ctx context.Context, name string) {
 	}()
 }
 
-func (d *Daemon) runOnce(ctx context.Context, name string) {
+// RunNow runs the named job and returns its outcome. If the job is already
+// running, RunNow waits for that run to finish first, then runs.
+func (d *Daemon) RunNow(ctx context.Context, name string) (engine.RunRecord, error) {
+	if _, err := d.Store.Job(name); err != nil {
+		return engine.RunRecord{}, err
+	}
+	st := d.state(name)
+	d.mu.Lock()
+	for st.running {
+		st.cond.Wait()
+	}
+	st.running = true
+	d.mu.Unlock()
+
+	rec := d.runOnce(ctx, name)
+
+	d.mu.Lock()
+	st.running = false
+	st.cond.Broadcast()
+	d.mu.Unlock()
+	return rec, nil
+}
+
+// runOnce performs one run, records it, and returns the outcome.
+func (d *Daemon) runOnce(ctx context.Context, name string) engine.RunRecord {
 	job, err := d.Store.Job(name)
 	if err != nil {
 		d.logf("job %s: %v", name, err)
-		return
+		return engine.RunRecord{Started: d.now(), Finished: d.now(), Error: err.Error()}
 	}
 	started := d.now()
 	res, err := engine.Run(ctx, job, engine.Options{
@@ -184,4 +273,76 @@ func (d *Daemon) runOnce(ctx context.Context, name string) {
 	if serr := d.Store.RecordRun(name, rec); serr != nil {
 		d.logf("job %s: recording run: %v", name, serr)
 	}
+	d.mu.Lock()
+	st := d.states[name]
+	if st == nil {
+		d.mu.Unlock()
+		return rec
+	}
+	st.last = &rec
+	d.mu.Unlock()
+	return rec
+}
+
+// Statuses reports the live state of every job in the store.
+func (d *Daemon) Statuses() ([]JobStatus, error) {
+	jobs, err := d.Store.LoadJobs()
+	if err != nil {
+		return nil, err
+	}
+	runs, err := d.Store.LastRuns()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]JobStatus, 0, len(jobs))
+	for _, j := range jobs {
+		st := d.state(j.Name)
+		d.mu.Lock()
+		s := JobStatus{Name: j.Name, Enabled: j.Enabled, Running: st.running}
+		if r, ok := runs[j.Name]; ok {
+			r := r
+			s.Last = &r
+		}
+		d.mu.Unlock()
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+// handle serves control-channel requests.
+func (d *Daemon) handle(ctx context.Context, req ipc.Request) ipc.Response {
+	switch req.Op {
+	case "ping":
+		return ipc.Response{OK: true}
+	case "status":
+		s, err := d.Statuses()
+		if err != nil {
+			return ipc.Response{Error: err.Error()}
+		}
+		return jsonResponse(s)
+	case "run":
+		rec, err := d.RunNow(ctx, req.Job)
+		if err != nil {
+			return ipc.Response{Error: err.Error()}
+		}
+		if !rec.OK {
+			return ipc.Response{Error: rec.Error, Data: mustJSON(rec)}
+		}
+		return jsonResponse(rec)
+	default:
+		return ipc.Response{Error: fmt.Sprintf("unknown operation %q", req.Op)}
+	}
+}
+
+func jsonResponse(v any) ipc.Response {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ipc.Response{Error: err.Error()}
+	}
+	return ipc.Response{OK: true, Data: b}
+}
+
+func mustJSON(v any) json.RawMessage {
+	b, _ := json.Marshal(v)
+	return b
 }
