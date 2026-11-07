@@ -4,6 +4,7 @@
 /engine/vendor/
 
 # Rust
+/target/
 /hash/target/
 /src-tauri/target/
 **/*.rs.bk
