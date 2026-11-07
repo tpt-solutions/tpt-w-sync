@@ -135,3 +135,20 @@ func TestWebDAVRefusesCredentialsOverPlainHTTP(t *testing.T) {
 		t.Fatal("credentials over http should be refused")
 	}
 }
+
+// Regression: a multi-level folder must have each parent created first.
+func TestWebDAVNestedFolderIsCreated(t *testing.T) {
+	srv := davfake.New("/dav", "", "")
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	w, err := NewWebDAV(WebDAVConfig{BaseURL: ts.URL + "/dav", Folder: "team/pc1/backups", AllowInsecureHTTP: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Write(context.Background(), "x.txt", strings.NewReader("ok"), time.Now()); err != nil {
+		t.Fatalf("nested folder write: %v", err)
+	}
+	if got := srv.Files(); len(got) != 1 || got[0] != "team/pc1/backups/x.txt" {
+		t.Fatalf("server files = %v", got)
+	}
+}

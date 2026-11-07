@@ -41,8 +41,15 @@ type WebDAV struct {
 	root   *url.URL
 	cfg    WebDAVConfig
 	client *http.Client
+	// endpointPath is the URL path of the endpoint; folderSegs are the
+	// configured folder split into segments. Ancestors of the folder live above root.
+	endpointPath string
+	folderSegs   []string
 
-	mu      sync.Mutex
+	mu sync.Mutex
+	// dirMu serialises collection creation: parallel uploads that create the
+	// same directory race, and servers answer the loser with an error.
+	dirMu   sync.Mutex
 	created map[string]bool // collections known to exist
 }
 
@@ -59,12 +66,17 @@ func NewWebDAV(cfg WebDAVConfig) (*WebDAV, error) {
 		return nil, errors.New("webdav: refusing to send credentials over plain http")
 	}
 	clean := path.Clean("/" + cfg.Folder)
-	u.Path = strings.TrimSuffix(u.Path, "/") + clean
+	endpoint := strings.TrimSuffix(u.Path, "/")
+	u.Path = endpoint + clean
 	c := cfg.HTTPClient
 	if c == nil {
 		c = http.DefaultClient
 	}
-	return &WebDAV{root: u, cfg: cfg, client: c, created: map[string]bool{}}, nil
+	var segs []string
+	if clean != "/" {
+		segs = strings.Split(strings.TrimPrefix(clean, "/"), "/")
+	}
+	return &WebDAV{root: u, cfg: cfg, client: c, created: map[string]bool{}, endpointPath: endpoint, folderSegs: segs}, nil
 }
 
 // Capabilities reports that WebDAV cannot hardlink.
@@ -104,6 +116,11 @@ func statusErr(op string, resp *http.Response) error {
 
 // ensureDirs creates each ancestor collection of rel that does not yet exist.
 func (w *WebDAV) ensureDirs(ctx context.Context, rel string) error {
+	w.dirMu.Lock()
+	defer w.dirMu.Unlock()
+	if err := w.ensureFolderAncestors(ctx); err != nil {
+		return err
+	}
 	// The backend's own folder comes first, then each ancestor of rel.
 	dirs := []string{""}
 	if dir := path.Dir(rel); dir != "." && dir != "" {
@@ -398,5 +415,40 @@ func checkRel(rel string) error {
 			return ErrPathEscape
 		}
 	}
+	return nil
+}
+
+// ensureFolderAncestors creates each level of the configured folder above the
+// backend root (for Folder "a/b", it creates "a" before "a/b"). Servers reject
+// MKCOL when the parent is missing, so this must come first.
+func (w *WebDAV) ensureFolderAncestors(ctx context.Context) error {
+	w.mu.Lock()
+	done := w.created["\x00ancestors"]
+	w.mu.Unlock()
+	if done {
+		return nil
+	}
+	for i := 1; i < len(w.folderSegs); i++ {
+		u := *w.root
+		u.Path = w.endpointPath + "/" + strings.Join(w.folderSegs[:i], "/")
+		req, err := http.NewRequestWithContext(ctx, "MKCOL", u.String(), nil)
+		if err != nil {
+			return err
+		}
+		if w.cfg.Username != "" {
+			req.SetBasicAuth(w.cfg.Username, w.cfg.Password)
+		}
+		resp, err := w.client.Do(req)
+		if err != nil {
+			return err
+		}
+		drain(resp)
+		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusMethodNotAllowed {
+			return statusErr("MKCOL "+u.Path, resp)
+		}
+	}
+	w.mu.Lock()
+	w.created["\x00ancestors"] = true
+	w.mu.Unlock()
 	return nil
 }
