@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>tpt-sync</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>tpt-sync</h1>
+      <span id="daemon" class="pill" role="status">checking daemon…</span>
+    </header>
+    <main>
+      <p id="notice" class="notice" hidden></p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Job</th>
+              <th scope="col">Destination</th>
+              <th scope="col">Schedule</th>
+              <th scope="col">State</th>
+              <th scope="col">Last run</th>
+              <th scope="col"><span class="visually-hidden">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody id="jobs"></tbody>
+        </table>
+      </div>
+      <p id="empty" class="empty" hidden>
+        No jobs yet. Add one with <code>tpt-sync job add</code>.
+      </p>
+      <p id="config" class="footnote"></p>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

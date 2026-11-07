@@ -91,7 +91,7 @@ Full specification: [spec.txt](spec.txt).
 Requirements:
 
 - Go 1.26+ (version pinned in `go.mod`)
-- Rust 1.85.0 (pinned in `rust-toolchain.toml`; `rustup` installs it automatically)
+- Rust 1.90.0 (pinned in `rust-toolchain.toml`; `rustup` installs it automatically)
 
 ```sh
 # Rust hash helper (the Go engine calls this binary for checksums)
@@ -103,6 +103,23 @@ go build -o tpt-sync ./engine/cmd/tpt-sync
 
 cargo test --workspace
 ```
+
+### Tray and status app (`src-tauri/`, `src/`)
+
+The desktop app is a Tauri window with a tray icon. It shows jobs, their
+state, and last results, and can start a run through the daemon. It needs
+Node 20 and the frontend built first, because Tauri embeds `dist/` at compile
+time:
+
+```sh
+npm ci
+npm run build                 # type-checks and bundles the UI into dist/
+cargo build -p tpt-sync-gui   # the app binary
+npm run tauri dev             # or: run the app in development mode
+```
+
+On Linux, Tauri needs WebKitGTK and the tray libraries; see the `Rust workspace`
+job in `.github/workflows/ci.yml` for the package list.
 
 The engine finds `tpt-sync-hash` via `$TPT_SYNC_HASH`, then next to the
 `tpt-sync` executable, then on `PATH`.

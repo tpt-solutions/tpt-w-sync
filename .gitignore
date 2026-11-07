@@ -38,3 +38,6 @@ Thumbs.db
 *.AppImage
 *.deb
 *.rpm
+
+# Tauri generated schemas
+src-tauri/gen/

@@ -1,0 +1,225 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+/* Copyright (c) 2026 TPT Solutions */
+
+:root {
+  --bg: #f6f8f8;
+  --surface: #ffffff;
+  --text: #15252a;
+  --muted: #5b6e73;
+  --border: #d5dfe1;
+  --accent: #14707c;
+  --accent-text: #ffffff;
+  --ok: #1d7a46;
+  --ok-bg: #e2f4ea;
+  --warn: #8a5a00;
+  --warn-bg: #fdf0d2;
+  --fail: #a32a2a;
+  --focus: #1a8fa0;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101a1d;
+    --surface: #182428;
+    --text: #e4eeef;
+    --muted: #94a8ad;
+    --border: #2c3d42;
+    --accent: #3fb3c3;
+    --accent-text: #0b1517;
+    --ok: #7ed3a0;
+    --ok-bg: #163524;
+    --warn: #f0c46b;
+    --warn-bg: #3a2e12;
+    --fail: #ff9b9b;
+    --focus: #58c7d6;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #101a1d;
+  --surface: #182428;
+  --text: #e4eeef;
+  --muted: #94a8ad;
+  --border: #2c3d42;
+  --accent: #3fb3c3;
+  --accent-text: #0b1517;
+  --ok: #7ed3a0;
+  --ok-bg: #163524;
+  --warn: #f0c46b;
+  --warn-bg: #3a2e12;
+  --fail: #ff9b9b;
+  --focus: #58c7d6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+main {
+  padding: 16px;
+}
+
+.pill {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.pill.ok {
+  color: var(--ok);
+  background: var(--ok-bg);
+  border-color: transparent;
+}
+
+.pill.warn {
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-color: transparent;
+}
+
+.notice {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 640px;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+th {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.name {
+  font-weight: 600;
+}
+
+.mono {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+
+.tag {
+  font-size: 0.75rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.state-running {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.state-failed {
+  color: var(--fail);
+}
+
+button {
+  font: inherit;
+  padding: 6px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.empty,
+.footnote {
+  color: var(--muted);
+}
+
+.footnote {
+  font-size: 0.8rem;
+  margin-top: 12px;
+  word-break: break-all;
+}
+
+code {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  main {
+    padding: 12px;
+  }
+}

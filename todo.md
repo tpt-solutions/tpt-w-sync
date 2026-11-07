@@ -69,7 +69,7 @@ Decisions made while implementing (recommendations adopted):
 | 6  | Scheduling: Cron Jobs & Real-Time Watch | 🟢 Done except configurable missed-run policy and OS service install |
 | 7  | Optional End-to-End Encryption | 🟢 Core and OS-keychain storage done; recovery-phrase (BIP-39) not implemented, warning UX only |
 | 8  | CLI | 🟢 Core commands, daemon IPC and CLI tests done; GUI-side IPC clients are Phase 9 |
-| 9  | Tauri Tray/GUI Status App | ❌ Not Started |
+| 9  | Tauri Tray/GUI Status App | 🟡 Tray, job list with live state, Run now, and close-to-tray done; job editor, version browser, and settings pending |
 | 10 | Linux Filesystem-Specific Support | 🟡 systemd user unit written (untested on Linux); filesystem-specific work not started (needs ext4/btrfs/zfs targets) |
 | 11 | Archon Support (Design Only) | 🟢 Design doc and rejecting stub done (`archon` store fails validation) |
 | 12 | Performance & Concurrency Polish | 🟡 Per-job bandwidth limit and hashing benchmarks done; global limits, profiling, large-tree stress pending |
@@ -90,14 +90,14 @@ have not been run against a real NAS, Nextcloud, AWS, or MinIO server.
 - [x] Init git repo, `.gitignore` (Go + Rust + Node/Tauri targets + Windows build artifacts)
 - [x] Add `LICENSE-MIT` and `LICENSE-APACHE` (dual license, TPT Solutions copyright)
 - [x] Add SPDX dual-license header/notice convention for source files (documented in README)
-- [ ] Repo layout: `engine/` (Go sync core, scheduler, backends, CLI), `hash/`
+- [x] Repo layout: `engine/` (Go sync core, scheduler, backends, CLI), `hash/`
       (Rust BLAKE3 helper binary crate), `src-tauri/` (Tauri backend), `src/`
       (TS/Vite frontend, no framework), shared module/workspace metadata
       (`license`, `authors = ["TPT Solutions"]`, `repository`)
-      — partial: `engine/`, `hash/`, and workspace metadata exist; `src-tauri/` and `src/` pending Phase 9
 - [x] `go.mod` module setup, `rust-toolchain.toml` (MSRV pin), `rustfmt.toml`, `clippy.toml`
-- [ ] Configure `tauri.conf.json` (app id, window defaults, bundle identifiers for tpt-sync)
-      — pending: needs Tauri scaffold (`src-tauri/`), deferred to Phase 9
+- [x] Configure `tauri.conf.json` (app id `com.tptsolutions.tpt-sync`, window defaults, bundle metadata)
+      — `src-tauri/tauri.conf.json`. Bundle identifier is a placeholder pending
+      confirmation of the TPT Solutions reverse-DNS prefix.
 - [x] `README.md` (from spec.txt), build instructions, license section
       — badges not yet added
 - [x] Set up CI (GitHub Actions, build+lint+test on Windows + Linux runners)
@@ -251,15 +251,21 @@ have not been run against a real NAS, Nextcloud, AWS, or MinIO server.
       inference, and delegation to a running daemon.
 
 ## Phase 9 — Tauri Tray/GUI Status App
-- [ ] Tray icon + menu: job status at a glance, quick run/pause, open main window
-- [ ] Main window: job list, per-job status/progress, last-run history
+- [~] Tray icon + menu: job status at a glance, quick run/pause, open main window
+      — done: tray icon with Show/Quit, left-click opens the window, close hides to tray.
+      Pending: per-job status in the tray menu, pause.
+- [~] Main window: job list, per-job status/progress, last-run history
+      — done: job list with live RUNNING state, last run result, and Run now.
+      Pending: per-file progress (the daemon does not stream progress yet).
 - [ ] Job editor: source/destination pickers (incl. cloud OAuth connect flow),
       schedule config, versioning/retention settings, encryption toggle
 - [ ] Version browser/restore UI (Phase 5 restore flow)
 - [ ] Settings: autostart toggle, global concurrency/bandwidth limits,
       light/dark theme
-- [ ] IPC between the Go scheduler/engine daemon and the Tauri frontend
-      (local socket/named pipe), consistent with the CLI's IPC (Phase 8)
+- [x] IPC between the Go scheduler/engine daemon and the Tauri backend
+      (named pipe on Windows, user socket elsewhere), using the same control
+      channel as the CLI. `src-tauri/src/ipc.rs` mirrors the Go endpoint naming,
+      and a test pins the Windows pipe name to the Go implementation's output.
 
 ## Phase 10 — Linux Filesystem-Specific Support
 - [ ] Native ext4/btrfs/zfs support: verify hardlink/versioning behavior per
