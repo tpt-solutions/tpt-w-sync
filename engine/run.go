@@ -48,6 +48,9 @@ type Options struct {
 	// Backend overrides the destination built from job.Destination. Used by
 	// tests and by callers that already hold an open backend.
 	Backend backend.Backend
+	// SharedLimiter, if set, caps this run together with other runs that share
+	// it (see NewSharedLimiter). It applies in addition to the job's own limit.
+	SharedLimiter *rate.Limiter
 }
 
 // Result summarises a run.
@@ -163,6 +166,7 @@ func Run(ctx context.Context, job Job, opts Options) (Result, error) {
 	ex := executor{
 		src: src, dst: dst, snap: snap, prevDir: prevDir, keys: keys,
 		limiter:  newLimiter(job.BandwidthLimit),
+		shared:   opts.SharedLimiter,
 		hardlink: dst.Capabilities().Hardlink,
 		progress: opts.OnProgress,
 		total:    len(plan.Actions),
@@ -195,7 +199,8 @@ type executor struct {
 	snap     string        // destination snapshot dir, e.g. .tpt-sync/versions/<ts>
 	prevDir  string        // previous snapshot dir, "" if none
 	keys     *crypt.Keys   // nil for plaintext destinations
-	limiter  *rate.Limiter // shared by all transfers in the run; nil = unlimited
+	limiter  *rate.Limiter // this job's cap, shared by its transfers; nil = unlimited
+	shared   *rate.Limiter // caller-supplied cap shared across runs; nil = none
 	hardlink bool
 	progress func(Progress)
 	total    int
@@ -280,7 +285,7 @@ func (e *executor) apply(ctx context.Context, a Action) error {
 		return err
 	}
 	defer r.Close()
-	src := throttle(ctx, r, e.limiter)
+	src := throttle(ctx, throttle(ctx, r, e.limiter), e.shared)
 	if e.keys == nil {
 		err = e.dst.Write(ctx, dstRel, src, a.ModTime)
 	} else {

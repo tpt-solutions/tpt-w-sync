@@ -31,6 +31,11 @@ func newLimiter(bytesPerSecond int64) *rate.Limiter {
 	return rate.NewLimiter(rate.Limit(bytesPerSecond), burst)
 }
 
+// NewSharedLimiter returns a limiter meant to be shared by several runs (for
+// example, all jobs run by one daemon). It returns nil when bytesPerSecond is
+// not positive.
+func NewSharedLimiter(bytesPerSecond int64) *rate.Limiter { return newLimiter(bytesPerSecond) }
+
 // throttledReader paces reads from r through lim.
 type throttledReader struct {
 	ctx context.Context

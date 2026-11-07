@@ -64,6 +64,10 @@ type Job struct {
 	// BandwidthLimit caps upload throughput for the whole job, in bytes per
 	// second (0 = unlimited).
 	BandwidthLimit int64 `json:"bandwidth_limit,omitempty"`
+	// MissedRun decides what happens to a scheduled run that was missed while
+	// the daemon was not running: "catch-up" (default) runs once at startup,
+	// "skip" waits for the next scheduled tick.
+	MissedRun string `json:"missed_run,omitempty"`
 }
 
 // DefaultConcurrency is used when a job does not set Concurrency.
@@ -115,6 +119,11 @@ func (j Job) Validate() error {
 	}
 	if j.BandwidthLimit < 0 {
 		return errors.New("bandwidth limit must be non-negative")
+	}
+	switch j.MissedRun {
+	case "", "catch-up", "skip":
+	default:
+		return fmt.Errorf("missed_run must be \"catch-up\" or \"skip\", not %q", j.MissedRun)
 	}
 	if j.Schedule != "" {
 		if _, err := schedule.Parse(j.Schedule); err != nil {

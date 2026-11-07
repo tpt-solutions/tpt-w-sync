@@ -58,3 +58,18 @@ func TestArchonStoreIsRejectedInThisBuild(t *testing.T) {
 		t.Fatal("unknown store accepted")
 	}
 }
+
+func TestMissedRunPolicyValidation(t *testing.T) {
+	for _, ok := range []string{"", "catch-up", "skip"} {
+		j := validJob()
+		j.MissedRun = ok
+		if err := j.Validate(); err != nil {
+			t.Errorf("missed_run %q rejected: %v", ok, err)
+		}
+	}
+	j := validJob()
+	j.MissedRun = "twice"
+	if err := j.Validate(); err == nil {
+		t.Fatal("unknown missed_run accepted")
+	}
+}

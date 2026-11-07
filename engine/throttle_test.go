@@ -68,3 +68,23 @@ func TestParseBytes(t *testing.T) {
 		}
 	}
 }
+
+// Two readers sharing one limiter draw from the same budget, so together they
+// take about as long as one reader moving the combined bytes.
+func TestSharedLimiterSpansReaders(t *testing.T) {
+	const limit = 256 << 10
+	shared := NewSharedLimiter(limit)
+	start := time.Now()
+	for i := 0; i < 2; i++ {
+		data := make([]byte, 256<<10)
+		if _, err := io.ReadAll(throttle(context.Background(), bytes.NewReader(data), shared)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if elapsed := time.Since(start); elapsed < time.Second {
+		t.Fatalf("shared budget not enforced across readers: %v", elapsed)
+	}
+	if NewSharedLimiter(0) != nil {
+		t.Fatal("zero shared limit should be nil")
+	}
+}

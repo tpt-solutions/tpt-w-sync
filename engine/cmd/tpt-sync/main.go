@@ -46,7 +46,7 @@ Commands:
   secret set <name> passphrase|password            store a secret in the OS keychain
   secret delete <name> passphrase|password         remove a stored secret
   status                                           last run and next scheduled run per job
-  daemon                                           run scheduler in the foreground
+  daemon [--bandwidth-limit N]                     run scheduler in the foreground
 
 Destination flags (job add/edit):
   --type local|webdav|s3   destination kind (inferred from --url/--bucket if omitted)
@@ -115,7 +115,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	case "status":
 		return c.status()
 	case "daemon":
-		return c.daemonCmd()
+		return c.daemonCmd(args[1:])
 	case "secret":
 		return c.secretCmd(args[1:])
 	default:
@@ -159,6 +159,7 @@ type jobFlags struct {
 	watch       bool
 	encrypt     bool
 	bandwidth   string
+	missedRun   string
 }
 
 func newJobFlags(name string, errOut io.Writer) *jobFlags {
@@ -179,6 +180,7 @@ func newJobFlags(name string, errOut io.Writer) *jobFlags {
 	j.fs.StringVar(&j.schedule, "schedule", "", "cron expression")
 	j.fs.BoolVar(&j.watch, "watch", false, "run on filesystem changes")
 	j.fs.StringVar(&j.bandwidth, "bandwidth-limit", "", "upload cap per second, e.g. 5M (0 or empty = unlimited)")
+	j.fs.StringVar(&j.missedRun, "missed-run", "", "catch-up (run once after a missed schedule) or skip")
 	j.fs.BoolVar(&j.encrypt, "encrypt", false, "end-to-end encrypt the destination (passphrase via TPT_SYNC_PASSPHRASE)")
 	return j
 }
@@ -186,6 +188,9 @@ func newJobFlags(name string, errOut io.Writer) *jobFlags {
 // apply copies flags that were explicitly set onto job. set reports which
 // flag names were given on the command line.
 func (j *jobFlags) apply(job *engine.Job, set map[string]bool) error {
+	if set["missed-run"] {
+		job.MissedRun = j.missedRun
+	}
 	if set["bandwidth-limit"] {
 		n, err := engine.ParseBytes(j.bandwidth)
 		if err != nil {
@@ -746,10 +751,23 @@ func (c *cli) status() error {
 	return tw.Flush()
 }
 
-func (c *cli) daemonCmd() error {
+func (c *cli) daemonCmd(args []string) error {
+	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
+	fs.SetOutput(c.errOut)
+	bw := fs.String("bandwidth-limit", "", "upload cap across all jobs, e.g. 10M per second (empty = unlimited)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	limit, err := engine.ParseBytes(*bw)
+	if err != nil {
+		return err
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	d := &daemon.Daemon{Store: c.store, Log: c.out, Secrets: c.secretStore(), ControlEndpoint: c.endpoint()}
+	d := &daemon.Daemon{
+		Store: c.store, Log: c.out, Secrets: c.secretStore(),
+		ControlEndpoint: c.endpoint(), Bandwidth: limit,
+	}
 	return d.Run(ctx)
 }
 

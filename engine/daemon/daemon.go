@@ -19,6 +19,7 @@ import (
 	"github.com/tpt-solutions/tpt-sync/engine/ipc"
 	"github.com/tpt-solutions/tpt-sync/engine/schedule"
 	"github.com/tpt-solutions/tpt-sync/engine/secrets"
+	"golang.org/x/time/rate"
 )
 
 // WatchDebounce is the quiet period before a watch-triggered run starts.
@@ -38,9 +39,21 @@ type Daemon struct {
 	// ControlEndpoint, if set, is where the control channel listens
 	// (see ipc.DefaultEndpoint). Empty disables it.
 	ControlEndpoint string
+	// Bandwidth caps upload throughput across all jobs run by this daemon, in
+	// bytes per second (0 = unlimited). Per-job limits still apply.
+	Bandwidth int64
 
 	mu     sync.Mutex
 	states map[string]*jobState
+
+	limOnce sync.Once
+	lim     *rate.Limiter
+}
+
+// limiter returns the daemon-wide upload limiter, or nil when unlimited.
+func (d *Daemon) limiter() *rate.Limiter {
+	d.limOnce.Do(func() { d.lim = engine.NewSharedLimiter(d.Bandwidth) })
+	return d.lim
 }
 
 // jobState serialises runs of one job. A trigger that arrives during a run
@@ -159,7 +172,9 @@ func MissedRun(sched *schedule.Schedule, lastStarted, now time.Time) (time.Time,
 // scheduleLoop fires a job at each cron tick. On startup it runs once if a
 // tick was missed since the job's last recorded run.
 func (d *Daemon) scheduleLoop(ctx context.Context, job engine.Job, sched *schedule.Schedule) {
-	if runs, err := d.Store.LastRuns(); err == nil {
+	if job.MissedRun == "skip" {
+		d.logf("job %s: missed runs are skipped", job.Name)
+	} else if runs, err := d.Store.LastRuns(); err == nil {
 		if last, ok := runs[job.Name]; ok {
 			if tick, missed := MissedRun(sched, last.Started, d.now()); missed {
 				d.logf("job %s: missed run at %s, running now", job.Name, tick.Format(time.RFC3339))
@@ -258,7 +273,7 @@ func (d *Daemon) runOnce(ctx context.Context, name string) engine.RunRecord {
 	}
 	started := d.now()
 	res, err := engine.Run(ctx, job, engine.Options{
-		Hasher: d.Hasher, Now: d.now, Secrets: d.Secrets,
+		Hasher: d.Hasher, Now: d.now, Secrets: d.Secrets, SharedLimiter: d.limiter(),
 	})
 	rec := engine.RunRecord{
 		Started: started, Finished: d.now(), Snapshot: res.Snapshot,
