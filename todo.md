@@ -157,7 +157,11 @@ have not been run against a real NAS, Nextcloud, AWS, or MinIO server.
 - [ ] SMB backend (native SMB2/3 client, credential handling, share mounting)
 - [x] WebDAV backend (HTTP basic auth; refuses credentials over plain http
       unless a test opts in). Digest/bearer auth not implemented.
-      — `engine/backend/webdav.go`, tested against `engine/internal/davfake`
+      — `engine/backend/webdav.go`. Tested against an in-memory fake and against
+      `golang.org/x/net/webdav`, the Go team's server. The real-server tests
+      found and fixed two bugs: nested folders were not created, and parallel
+      uploads raced to create the same collection. Not yet tested against
+      Nextcloud, Apache mod_dav, or a NAS.
 - [x] S3-compatible backend (AWS S3, MinIO, any S3 API via minio-go; multipart
       uploads handled by the client; credentials refused over plain http)
       — `engine/backend/s3.go`, tested over TLS against gofakes3. Not tested
