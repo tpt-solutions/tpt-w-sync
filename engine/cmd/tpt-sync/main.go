@@ -158,6 +158,7 @@ type jobFlags struct {
 	schedule    string
 	watch       bool
 	encrypt     bool
+	bandwidth   string
 }
 
 func newJobFlags(name string, errOut io.Writer) *jobFlags {
@@ -177,13 +178,21 @@ func newJobFlags(name string, errOut io.Writer) *jobFlags {
 	j.fs.IntVar(&j.concurrency, "concurrency", 0, "parallel transfers")
 	j.fs.StringVar(&j.schedule, "schedule", "", "cron expression")
 	j.fs.BoolVar(&j.watch, "watch", false, "run on filesystem changes")
+	j.fs.StringVar(&j.bandwidth, "bandwidth-limit", "", "upload cap per second, e.g. 5M (0 or empty = unlimited)")
 	j.fs.BoolVar(&j.encrypt, "encrypt", false, "end-to-end encrypt the destination (passphrase via TPT_SYNC_PASSPHRASE)")
 	return j
 }
 
 // apply copies flags that were explicitly set onto job. set reports which
 // flag names were given on the command line.
-func (j *jobFlags) apply(job *engine.Job, set map[string]bool) {
+func (j *jobFlags) apply(job *engine.Job, set map[string]bool) error {
+	if set["bandwidth-limit"] {
+		n, err := engine.ParseBytes(j.bandwidth)
+		if err != nil {
+			return err
+		}
+		job.BandwidthLimit = n
+	}
 	if set["source"] {
 		job.Source = j.source
 	}
@@ -218,6 +227,7 @@ func (j *jobFlags) apply(job *engine.Job, set map[string]bool) {
 	if set["encrypt"] {
 		job.Encrypt = j.encrypt
 	}
+	return nil
 }
 
 // applyDestination updates only the destination fields whose flags were given.
@@ -313,7 +323,9 @@ func (c *cli) jobAdd(args []string) error {
 		return err
 	}
 	job := engine.Job{Name: name, Enabled: true}
-	jf.apply(&job, setFlags(jf.fs))
+	if err := jf.apply(&job, setFlags(jf.fs)); err != nil {
+		return err
+	}
 	jobs, err := c.store.LoadJobs()
 	if err != nil {
 		return err
@@ -346,7 +358,9 @@ func (c *cli) jobEdit(args []string) error {
 	found := false
 	for i := range jobs {
 		if jobs[i].Name == name {
-			jf.apply(&jobs[i], setFlags(jf.fs))
+			if err := jf.apply(&jobs[i], setFlags(jf.fs)); err != nil {
+				return err
+			}
 			found = true
 		}
 	}

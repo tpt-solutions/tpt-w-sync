@@ -18,6 +18,7 @@ import (
 	"github.com/tpt-solutions/tpt-sync/engine/backend"
 	"github.com/tpt-solutions/tpt-sync/engine/crypt"
 	"github.com/tpt-solutions/tpt-sync/engine/secrets"
+	"golang.org/x/time/rate"
 )
 
 // Progress is reported once per completed action during execution.
@@ -161,6 +162,7 @@ func Run(ctx context.Context, job Job, opts Options) (Result, error) {
 
 	ex := executor{
 		src: src, dst: dst, snap: snap, prevDir: prevDir, keys: keys,
+		limiter:  newLimiter(job.BandwidthLimit),
 		hardlink: dst.Capabilities().Hardlink,
 		progress: opts.OnProgress,
 		total:    len(plan.Actions),
@@ -190,9 +192,10 @@ func Run(ctx context.Context, job Job, opts Options) (Result, error) {
 type executor struct {
 	src      *backend.Local
 	dst      backend.Backend
-	snap     string      // destination snapshot dir, e.g. .tpt-sync/versions/<ts>
-	prevDir  string      // previous snapshot dir, "" if none
-	keys     *crypt.Keys // nil for plaintext destinations
+	snap     string        // destination snapshot dir, e.g. .tpt-sync/versions/<ts>
+	prevDir  string        // previous snapshot dir, "" if none
+	keys     *crypt.Keys   // nil for plaintext destinations
+	limiter  *rate.Limiter // shared by all transfers in the run; nil = unlimited
 	hardlink bool
 	progress func(Progress)
 	total    int
@@ -277,10 +280,11 @@ func (e *executor) apply(ctx context.Context, a Action) error {
 		return err
 	}
 	defer r.Close()
+	src := throttle(ctx, r, e.limiter)
 	if e.keys == nil {
-		err = e.dst.Write(ctx, dstRel, r, a.ModTime)
+		err = e.dst.Write(ctx, dstRel, src, a.ModTime)
 	} else {
-		err = e.writeEncrypted(ctx, dstRel, r, a.ModTime)
+		err = e.writeEncrypted(ctx, dstRel, src, a.ModTime)
 	}
 	if err != nil {
 		return err

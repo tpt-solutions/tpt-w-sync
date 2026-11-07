@@ -36,6 +36,10 @@ type Versioning struct {
 	MaxVersions int `json:"max_versions,omitempty"`
 	// MaxAge removes snapshots older than this (0 = unlimited).
 	MaxAge time.Duration `json:"max_age,omitempty"`
+	// Store selects where snapshots live: "" (the default, the destination
+	// layout) or "archon" (Archon-native snapshots, Phase 11). The archon store
+	// is not available in this build, so jobs that select it are rejected.
+	Store string `json:"store,omitempty"`
 }
 
 // Job is one source → destination sync definition.
@@ -57,6 +61,9 @@ type Job struct {
 	// Encrypt enables end-to-end encryption of the destination. Requires a
 	// passphrase at run time; the destination must be dedicated to this job.
 	Encrypt bool `json:"encrypt,omitempty"`
+	// BandwidthLimit caps upload throughput for the whole job, in bytes per
+	// second (0 = unlimited).
+	BandwidthLimit int64 `json:"bandwidth_limit,omitempty"`
 }
 
 // DefaultConcurrency is used when a job does not set Concurrency.
@@ -96,8 +103,18 @@ func (j Job) Validate() error {
 	if j.Versioning.MaxVersions < 0 || j.Versioning.MaxAge < 0 {
 		return errors.New("versioning limits must be non-negative")
 	}
+	switch j.Versioning.Store {
+	case "", "destination":
+	case "archon":
+		return errors.New("versioning store \"archon\" is not available in this build (see docs/archon-design.md)")
+	default:
+		return fmt.Errorf("unknown versioning store %q", j.Versioning.Store)
+	}
 	if j.Concurrency < 0 {
 		return errors.New("concurrency must be non-negative")
+	}
+	if j.BandwidthLimit < 0 {
+		return errors.New("bandwidth limit must be non-negative")
 	}
 	if j.Schedule != "" {
 		if _, err := schedule.Parse(j.Schedule); err != nil {
