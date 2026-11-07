@@ -1,0 +1,35 @@
+# tpt-sync scheduler daemon, as a systemd *user* service.
+#
+# Install (per user, no root needed):
+#   install -Dm755 tpt-sync ~/.local/bin/tpt-sync
+#   install -Dm644 tpt-sync.service ~/.config/systemd/user/tpt-sync.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now tpt-sync.service
+#
+# Jobs and secrets are per user (config in ~/.config/tpt-sync, passphrases and
+# passwords in the Secret Service keyring). Keep the keyring unlocked for the
+# session, or the daemon cannot start encrypted or password-protected jobs.
+
+[Unit]
+Description=tpt-sync backup and sync daemon
+Documentation=https://github.com/tpt-solutions/tpt-sync
+After=graphical-session.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/tpt-sync daemon
+Restart=on-failure
+RestartSec=10
+# Hardening that does not interfere with user data access.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=%h/.config/tpt-sync %h/.local/state
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=default.target
