@@ -25,6 +25,16 @@ tpt-sync status
 tpt-sync daemon                 # run scheduled and watched jobs in the foreground
 ```
 
+While `tpt-sync daemon` is running, `run` and `status` talk to it over a
+per-user control channel (a named pipe on Windows, a user-only socket
+elsewhere), so manual and scheduled runs never overlap. Jobs edited while the
+daemon runs take effect after it restarts.
+
+Limit upload bandwidth per job with `--bandwidth-limit 5M` (bytes per second,
+K/M/G suffixes).
+
+A systemd user unit for the daemon is in `packaging/systemd/`.
+
 Remote destinations:
 
 ```sh

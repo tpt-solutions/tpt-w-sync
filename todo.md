@@ -62,24 +62,25 @@ Decisions made while implementing (recommendations adopted):
 |-------|------|----------|
 | 0  | Project Setup & Licensing | 🟡 In Progress (local items done; CI untested on GitHub; tauri config, org hosting pending) |
 | 1  | Core Sync Engine & Job Model (Go) | 🟢 Done except OS-keychain credentials |
-| 2  | Rust BLAKE3 Checksum Helper | 🟢 Done except benchmarks and installer bundling |
+| 2  | Rust BLAKE3 Checksum Helper | 🟢 Done; benchmarked (see Phase 2 notes); installer bundling pending |
 | 3  | Destination Backends: Local, SMB, WebDAV, S3 | 🟡 Local, WebDAV, S3 done (tested against in-process servers); SMB not started |
 | 4  | Cloud Destination Backends: Google Drive, Dropbox, Azure Blob | ❌ Not Started (needs provider app registrations) |
 | 5  | Versioned Snapshots & Hardlink Dedup | 🟢 Done except size-based retention |
 | 6  | Scheduling: Cron Jobs & Real-Time Watch | 🟢 Done except configurable missed-run policy and OS service install |
 | 7  | Optional End-to-End Encryption | 🟢 Core and OS-keychain storage done; recovery-phrase (BIP-39) not implemented, warning UX only |
-| 8  | CLI | 🟡 Core commands done (incl. `secret`, remote destinations); IPC and CLI tests pending |
+| 8  | CLI | 🟢 Core commands, daemon IPC and CLI tests done; GUI-side IPC clients are Phase 9 |
 | 9  | Tauri Tray/GUI Status App | ❌ Not Started |
-| 10 | Linux Filesystem-Specific Support | ❌ Not Started (needs ext4/btrfs/zfs test targets) |
-| 11 | Archon Support (Design Only) | 🟡 Design doc written; stub backend pending |
-| 12 | Performance & Concurrency Polish | ❌ Not Started |
-| 13 | Testing & QA | 🟡 Unit and end-to-end smoke tests done; integration and manual QA pending |
+| 10 | Linux Filesystem-Specific Support | 🟡 systemd user unit written (untested on Linux); filesystem-specific work not started (needs ext4/btrfs/zfs targets) |
+| 11 | Archon Support (Design Only) | 🟢 Design doc and rejecting stub done (`archon` store fails validation) |
+| 12 | Performance & Concurrency Polish | 🟡 Per-job bandwidth limit and hashing benchmarks done; global limits, profiling, large-tree stress pending |
+| 13 | Testing & QA | 🟡 Unit, CLI, daemon, IPC and fuzz tests done; manual QA and real-server integration pending |
 | 14 | Release v1 | ❌ Not Started |
 
 Verification status: Rust helper tests pass (`cargo test`). Go tests pass on
-Windows (`go test ./...`, 38 engine/backend/keychain tests, including the real
-helper integration tests, the encryption tests, and WebDAV/S3 full-cycle tests
-against in-process servers). The race detector and Linux runs are configured in
+Windows (`go test ./...`, across the engine, backend, crypt, schedule, secrets,
+ipc, daemon and CLI packages, including the real helper integration tests, the
+encryption tests, the named-pipe control channel, and WebDAV/S3 full-cycle
+tests against in-process servers). Fuzz targets were run briefly. The race detector and Linux runs are configured in
 CI but have not been run locally (race needs cgo). The WebDAV and S3 backends
 have not been run against a real NAS, Nextcloud, AWS, or MinIO server.
 
@@ -135,8 +136,13 @@ have not been run against a real NAS, Nextcloud, AWS, or MinIO server.
 - [x] Go wrapper: subprocess invocation, streaming stdout parsing, error
       propagation, binary discovery (`$TPT_SYNC_HASH`, next to executable, PATH)
       — `engine/hasher.go`. Bundling alongside the installer is in Phase 14.
-- [ ] Benchmarks: throughput vs. a pure-Go BLAKE3 baseline to validate the
-      subprocess-boundary approach doesn't regress performance on large trees
+- [x] Benchmarks: throughput vs. a pure-Go BLAKE3 baseline — `engine/hasher_bench_test.go`.
+      Result (3 iterations, release helper, this machine): 64 MiB single file,
+      helper 1,432 MB/s vs pure-Go 1,895 MB/s, so the subprocess is slower for a
+      large single file. Batching is what pays off: 1,000 small files in one
+      helper call took 2.2 s versus about 17 ms per file when spawned per file.
+      Open: Rust-side multithreading (blake3 rayon feature) might close the gap;
+      large-tree benchmarks not yet run.
 - [x] Unit tests: hash correctness against known BLAKE3 test vectors
       (empty input and "abc"), streaming vs one-shot, JSON escaping
       — plus Go integration tests against the real binary (`engine/hasher_test.go`)
@@ -234,11 +240,15 @@ have not been run against a real NAS, Nextcloud, AWS, or MinIO server.
 - [x] `tpt-sync versions list/restore <job> [--version <ts>] [--path REL]`
 - [~] `tpt-sync status` (last-run results and next scheduled run). Live
       "currently running" state needs the daemon IPC below.
-- [ ] CLI talks to the same engine/daemon used by the GUI (local
-      socket/named pipe IPC). Today `run` executes in-process and the daemon is
-      a separate foreground process; they coordinate only through the store.
-- [ ] CLI unit/integration tests (command parsing and output not yet covered;
-      engine behaviour is covered)
+- [x] CLI talks to the same engine/daemon used by the GUI (local
+      socket/named pipe IPC). `run` delegates to a running daemon so manual and
+      scheduled runs never overlap; `status` shows live RUNNING state.
+      — `engine/ipc/` (named pipe on Windows, user-only Unix socket elsewhere),
+      `engine/daemon/` control handler (ping, status, run).
+      Not yet: live reload of job edits made while the daemon runs (restart it).
+- [x] CLI unit/integration tests — `engine/cmd/tpt-sync/main_test.go` covers
+      job lifecycle, dry-run, real runs, restore, usage errors, remote type
+      inference, and delegation to a running daemon.
 
 ## Phase 9 — Tauri Tray/GUI Status App
 - [ ] Tray icon + menu: job status at a glance, quick run/pause, open main window
@@ -257,8 +267,8 @@ have not been run against a real NAS, Nextcloud, AWS, or MinIO server.
 - [ ] btrfs/zfs snapshot integration as an *optional* faster-path alternative
       to hardlink dedup when the destination filesystem supports native
       snapshots (still exposed through the same versioning UI/CLI)
-- [ ] Linux packaging groundwork (paths, permissions, systemd user unit for
-      the scheduler daemon)
+- [x] Linux packaging groundwork: systemd user unit with restart and sandboxing
+      — `packaging/systemd/tpt-sync.service` (not yet run on a Linux host)
 - [ ] Verify behavior on at least one ext4 and one btrfs/zfs test target
 
 ## Phase 11 — Archon Support (Design Only)
@@ -268,14 +278,17 @@ have not been run against a real NAS, Nextcloud, AWS, or MinIO server.
 - [x] Open Questions (pending tpt-archon team): recorded in
       `docs/archon-design.md` (delta API shape, mapping to versioning model,
       file addressing, hardlink fallback interaction, consistency, encryption)
-- [ ] Post-v1 `archon` backend/feature flag plan (stub backend,
-      `is_available() -> false`, `Unsupported` errors until implemented) —
-      plan is in the design doc; stub not yet written
+- [x] Post-v1 `archon` store stub: selecting `versioning.store = "archon"`
+      fails validation with a pointer to the design, rather than falling back.
+      — `engine/job.go`, tested in `engine/job_test.go`. No `Available()`
+      backend yet; that waits on the tpt-archon API.
 
 ## Phase 12 — Performance & Concurrency Polish
 - [ ] Large-tree performance tuning (millions of small files scenario):
       walker/diffing throughput, worker pool tuning
-- [ ] Bandwidth throttling (global + per-job limits) for network destinations
+- [x] Bandwidth throttling, per job (shared by all of the job's transfers).
+      Global cap across jobs still pending.
+      — `engine/throttle.go`, `--bandwidth-limit` (e.g. 5M)
 - [ ] Memory profiling (engine daemon, checksum helper batching, WebView)
 - [ ] Resumable transfer correctness under interruption (network drop,
       process kill) across all backends
@@ -284,6 +297,10 @@ have not been run against a real NAS, Nextcloud, AWS, or MinIO server.
 ## Phase 13 — Testing & QA
 - [~] Unit tests: diffing, versioning/dedup, scheduling, encryption (per-phase
       tests in place; consolidated coverage pass pending)
+- [x] Fuzz targets: filter matching, size parsing, cron parsing, stream
+      decryption. A 15-20 s run of each found no panics; one size-overflow bug
+      was found and fixed.
+- [x] Daemon and CLI tests over real transports (named pipe on Windows).
 - [ ] Integration tests: end-to-end job run across each backend (local, SMB,
       WebDAV, S3, Google Drive, Dropbox, Azure Blob)
 - [ ] Manual QA: Windows 10/11
