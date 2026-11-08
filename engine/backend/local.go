@@ -51,6 +51,18 @@ func (l *Local) Capabilities() Capabilities {
 	return l.caps
 }
 
+// hasDriveLetter reports whether rel starts with a Windows drive designator
+// such as "C:". It is checked on every platform so that paths are rejected
+// the same way on Linux and macOS, where "C:/x" would otherwise be a relative
+// name that silently creates a "C:" directory under root.
+func hasDriveLetter(rel string) bool {
+	if len(rel) < 2 || rel[1] != ':' {
+		return false
+	}
+	c := rel[0]
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
 // abs maps a slash-relative path to an absolute path under root, rejecting
 // anything that would escape the root.
 func (l *Local) abs(rel string) (string, error) {
@@ -58,7 +70,7 @@ func (l *Local) abs(rel string) (string, error) {
 		return l.root, nil
 	}
 	if strings.ContainsRune(rel, 0) || path.IsAbs(rel) || filepath.IsAbs(rel) ||
-		filepath.VolumeName(rel) != "" {
+		filepath.VolumeName(rel) != "" || hasDriveLetter(rel) {
 		return "", ErrPathEscape
 	}
 	clean := path.Clean(rel)
